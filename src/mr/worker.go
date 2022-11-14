@@ -102,6 +102,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 		}
 	}
+	//这个有什么用？
+	time.Sleep(time.Second)
 }
 
 // example function to show how to make an RPC call to the coordinator.
