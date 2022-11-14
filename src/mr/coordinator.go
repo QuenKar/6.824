@@ -246,7 +246,9 @@ func (c *Coordinator) Done() bool {
 	defer mtx.Unlock()
 	// Your code here.
 	if c.GlobalPhase == AllDone {
-		fmt.Printf("All tasks has been done, Phase done\n")
+		fmt.Printf("All tasks has been done.\n")
+		//删除tmp files
+		deleteTmpFiles()
 		return true
 	} else {
 		return false
@@ -275,6 +277,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.server()
 
 	go c.CrashChecker()
+
+	// defer deleteTmpFiles()
 
 	return &c
 }
@@ -374,6 +378,19 @@ func getTmpFiles(idx int) []string {
 		}
 	}
 	return res
+}
+
+func deleteTmpFiles() {
+	fmt.Print("delete tmp files\n")
+	path, _ := os.Getwd()
+
+	fs, _ := ioutil.ReadDir(path)
+
+	for _, f := range fs {
+		if strings.HasPrefix(f.Name(), "mr-tmp") {
+			os.Remove(f.Name())
+		}
+	}
 }
 
 func (c *Coordinator) generateTaskId() int {
