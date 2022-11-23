@@ -118,14 +118,22 @@ type Raft struct {
 
 }
 
-type AppendEntries struct {
-	term     int //leader's term
-	leaderId int //leader id
+type AppendEntriesArgs struct {
+	Term     int //leader's term
+	LeaderId int //leader id
 
-	prevLogIndex int //前一个处理的log entry的下标
-	prevLogTerm  int //前一个处理的log entry的任期
+	PrevLogIndex int //前一个处理的log entry的下标
+	PrevLogTerm  int //前一个处理的log entry的任期
 
-	entries []LogEntry
+	Entries []LogEntry //leader发送的log entries，如果为空，就当作heartbeat使用
+
+	LeaderCommit int //leader commited index
+
+}
+
+type AppendEntriesReply struct {
+	Term    int
+	Success bool
 }
 
 // return currentTerm and whether this server
@@ -202,12 +210,20 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	Term int
+
+	CandidateId int //寻求投票的node id
+
+	LastLogIndex int //index of candidate’s last log entry
+	LastLogTerm  int //term of candidate’s last log entry
 }
 
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (2A).
+	term        int
+	VoteGranted bool //对于candidate，判断是否拿到了选票，true为拿到
 }
 
 // example RequestVote RPC handler.
