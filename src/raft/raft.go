@@ -132,8 +132,9 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	Term    int
-	Success bool
+	Term        int
+	Success     bool               //true if follower contained entry matching prevLogIndex and prevLogTerm
+	AppendState AppendEntriesState //判断append的状态
 }
 
 // return currentTerm and whether this server
@@ -223,7 +224,8 @@ type RequestVoteArgs struct {
 type RequestVoteReply struct {
 	// Your data here (2A).
 	term        int
-	VoteGranted bool //对于candidate，判断是否拿到了选票，true为拿到
+	VoteGranted bool      //对于candidate，判断是否拿到了选票，true为拿到
+	VoteState   VoteState //判断vote状态
 }
 
 // example RequestVote RPC handler.
