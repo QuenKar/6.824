@@ -20,6 +20,7 @@ package raft
 import (
 	//	"bytes"
 
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -139,6 +140,7 @@ type AppendEntriesReply struct {
 
 // return currentTerm and whether this server
 // believes it is the leader.
+// return : (term, isleader)
 func (rf *Raft) GetState() (int, bool) {
 
 	var term int
@@ -333,8 +335,26 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-
 	// Your initialization code here (2A, 2B, 2C).
+
+	rf.applyChan = applyCh
+
+	rf.currentTerm = 0
+	rf.votedFor = -1 //表示没有投给任何node
+
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+
+	rf.logs = make([]LogEntry, 0)
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
+
+	//初始状态是 follower
+	rf.state = Follower
+	//overtime is in [150,350]
+	rf.overtime = time.Duration(150+rand.Intn(201)) * time.Millisecond
+	//初始化定时器
+	rf.timer = time.NewTicker(rf.overtime)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
