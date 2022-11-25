@@ -20,6 +20,7 @@ package raft
 import (
 	//	"bytes"
 
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -111,7 +112,7 @@ type Raft struct {
 	nextIndex  []int //对于每一个node，需要发给它的下一个log entry的下标
 	matchIndex []int //对于每一个node，已经复制给它的最大log entry下标
 
-	state    Status        //node 的角色 leader follower candidate
+	role     Status        //node 的角色 leader follower candidate
 	overtime time.Duration //超时时间
 	timer    *time.Ticker  //计时器
 
@@ -146,7 +147,7 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
-	if rf.state == Leader {
+	if rf.role == Leader {
 		isleader = true
 	} else {
 		isleader = false
@@ -225,7 +226,7 @@ type RequestVoteArgs struct {
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (2A).
-	term        int
+	Term        int
 	VoteGranted bool      //对于candidate，判断是否拿到了选票，true为拿到
 	VoteState   VoteState //判断vote状态
 }
@@ -233,6 +234,77 @@ type RequestVoteReply struct {
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	//server挂掉了
+	if rf.killed() {
+		reply.Term = -1
+		reply.VoteGranted = false
+		reply.VoteState = Killed
+		return
+	}
+
+	//候选人的任期比自己还小，不投票
+	if args.Term < rf.currentTerm {
+		reply.VoteState = Expired
+		reply.VoteGranted = false
+		reply.Term = rf.currentTerm
+		return
+	}
+
+	//收到的RPC任期>自己的当前任期，重制自己状态
+	if args.Term > rf.currentTerm {
+		rf.role = Follower
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+	}
+
+	//候选人的和自己的Term一样的情况下
+	if rf.votedFor == -1 {
+		//没投过票
+		lastLogIdx := len(rf.logs) - 1
+		lastLogTerm := 0
+		if lastLogIdx >= 0 {
+			lastLogTerm = rf.logs[lastLogIdx].term
+		}
+		if lastLogIdx <= args.LastLogIndex && lastLogTerm <= args.LastLogTerm {
+			//符合条件，给票
+			rf.votedFor = args.CandidateId
+			reply.VoteState = Normal
+			reply.VoteGranted = true
+			reply.Term = args.Term
+			rf.timer.Reset(rf.overtime)
+
+			//debug
+			fmt.Printf("[	    func-RequestVote-rf(%v)		] : has voted for rf[%v]\n", rf.me, rf.votedFor)
+		} else {
+			//候选人的logs没自己的新，不给票
+			reply.VoteState = Expired
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = false
+			return
+		}
+	} else {
+		//任期相同，但是已经投过票的情况，有两种:
+		reply.VoteGranted = false
+		reply.VoteState = Voted
+		//给该候选人投过票了
+		if rf.votedFor == args.CandidateId {
+			rf.role = Follower
+
+		} else {
+			//没票了
+			return
+		}
+		rf.timer.Reset(rf.overtime)
+	}
+
+}
+
+// AppendEntries RPC handler
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -262,8 +334,64 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // capitalized all field names in structs passed over RPC, and
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply, getVoted *int) bool {
+	if rf.killed() {
+		return false
+	}
+
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	//失败重传
+	for !ok {
+		if rf.killed() {
+			return false
+		}
+		ok = rf.peers[server].Call("Raft.RequestVote", args, reply)
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	// 请求投票的人term比自己还小，直接返回？这段代码应该放在这里吗？
+	// if args.Term < rf.currentTerm {
+	// 	return false
+	// }
+
+	//对reply做处理
+	switch reply.VoteState {
+	case Expired:
+		{
+			rf.role = Follower
+			rf.timer.Reset(rf.overtime)
+			if reply.Term > rf.currentTerm {
+				rf.currentTerm = reply.Term
+				rf.votedFor = -1
+			}
+		}
+
+	case Normal, Voted:
+		{
+			if reply.Term == rf.currentTerm && reply.VoteGranted {
+				*getVoted++
+			}
+			//获得了超过一半的选票，变成leader
+			if *getVoted > (len(rf.peers) / 2) {
+				rf.role = Leader
+				rf.nextIndex = make([]int, len(rf.peers))
+				for idx := range rf.nextIndex {
+					rf.nextIndex[idx] = len(rf.logs) + 1 // 注意这里不是len(rf.logs)，因为logs的索引默认从1开始增加
+				}
+				rf.timer.Reset(HeartBeatTimeout)
+			}
+		}
+	case Killed:
+		return false
+	}
+
+	return ok
+}
+
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
 
@@ -301,6 +429,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	rf.mu.Lock()
+	rf.timer.Stop()
+	rf.mu.Unlock()
 }
 
 func (rf *Raft) killed() bool {
@@ -311,11 +442,80 @@ func (rf *Raft) killed() bool {
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
-	for rf.killed() == false {
+	for !rf.killed() {
 
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
+
+		select {
+		case <-rf.timer.C:
+			if rf.killed() {
+				return
+			}
+			//lock
+			rf.mu.Lock()
+
+			switch rf.role {
+			case Follower:
+				rf.role = Candidate
+
+			case Candidate:
+				rf.currentTerm += 1
+				rf.votedFor = rf.me
+				//这里需不需要再次rand overtime？yes!
+				rf.overtime = time.Duration(150+rand.Intn(201)) * time.Millisecond
+				rf.timer.Reset(rf.overtime)
+				//统计投票，初始为1（自己给自己投）
+				getVoted := 1
+
+				//send requestVote rpc to other servers
+				for idx := range rf.peers {
+					if idx != rf.me {
+						lastlogidx := len(rf.logs) - 1
+						voteArgs := RequestVoteArgs{
+							Term:         rf.currentTerm,
+							CandidateId:  rf.me,
+							LastLogIndex: lastlogidx,
+							LastLogTerm:  0,
+						}
+						if lastlogidx >= 0 {
+							voteArgs.LastLogTerm = rf.logs[lastlogidx].term
+						}
+
+						voteReply := RequestVoteReply{}
+						go rf.sendRequestVote(idx, &voteArgs, &voteReply, &getVoted)
+					}
+				}
+
+			case Leader:
+				// reset timer
+				rf.timer.Reset(HeartBeatTimeout)
+				//send heartbeat to other servers
+				for idx := range rf.peers {
+					if idx != rf.me {
+						heartbeatArgs := AppendEntriesArgs{
+							Term:         rf.currentTerm,
+							LeaderId:     rf.me,
+							PrevLogIndex: 0,
+							PrevLogTerm:  0,
+							Entries:      nil,
+							LeaderCommit: rf.commitIndex,
+						}
+
+						heartbeatReply := AppendEntriesReply{}
+
+						go rf.sendAppendEntries(idx, &heartbeatArgs, &heartbeatReply)
+					}
+
+				}
+
+			default:
+				fmt.Printf("unknown server role\n")
+			}
+			//unlock
+			rf.mu.Unlock()
+		}
 
 	}
 }
@@ -350,7 +550,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.matchIndex = make([]int, len(peers))
 
 	//初始状态是 follower
-	rf.state = Follower
+	rf.role = Follower
 	//overtime is in [150,350]
 	rf.overtime = time.Duration(150+rand.Intn(201)) * time.Millisecond
 	//初始化定时器
