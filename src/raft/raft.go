@@ -379,7 +379,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	// 请求投票的人term比自己还小，直接返回？这段代码应该放在这里吗？
 	// 这里处理的情况是：candidate发送RequestVote投票后，被别的候选人
 	// 抢先变成leader，然后自己的任期已经更新的比
 	// 发送RequestVote时要大了，直接放弃本次竞选
