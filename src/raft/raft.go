@@ -83,9 +83,9 @@ type ApplyMsg struct {
 
 // Log Entry
 type LogEntry struct {
-	term int
+	Term int
 	//command type
-	command interface{}
+	Command interface{}
 }
 
 // A Go object implementing a single Raft peer.
@@ -266,7 +266,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		lastLogIdx := len(rf.logs) - 1
 		lastLogTerm := 0
 		if lastLogIdx >= 0 {
-			lastLogTerm = rf.logs[lastLogIdx].term
+			lastLogTerm = rf.logs[lastLogIdx].Term
 		}
 		if lastLogIdx <= args.LastLogIndex && lastLogTerm <= args.LastLogTerm {
 			//符合条件，给票
@@ -277,7 +277,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			rf.timer.Reset(rf.overtime)
 
 			//debug
-			fmt.Printf("[	    func-RequestVote-rf(%v)		] : has voted for rf[%v]\n", rf.me, rf.votedFor)
+			// fmt.Printf("[	    func-RequestVote-rf(%v)		] : has voted for rf[%v]\n", rf.me, rf.votedFor)
 		} else {
 			//候选人的logs没自己的新，不给票
 			reply.VoteState = Expired
@@ -304,7 +304,37 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 // AppendEntries RPC handler
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	if rf.killed() {
+		reply.AppendState = AppendKilled
+		reply.Success = false
+		reply.Term = -1
+		return
+	}
+
+	if args.Term < rf.currentTerm {
+		reply.AppendState = AppendOutOfDate
+		reply.Success = false
+		reply.Term = rf.currentTerm
+		return
+	}
+
+	//更新自己的状态
+	rf.currentTerm = args.Term
+	rf.votedFor = args.LeaderId
+	rf.role = Follower
+	rf.timer.Reset(rf.overtime)
+
+	//处理log entries
+
+
+
+	//对reply赋值
+	reply.AppendState = AppendNormal
+	reply.Success = true
+	reply.Term = rf.currentTerm
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -391,7 +421,39 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+
+	if rf.killed() {
+		return false
+	}
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+
+	for !ok {
+		if rf.killed() {
+			return false
+		}
+		ok = rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	switch reply.AppendState {
+	case AppendKilled:
+		{
+			return false
+		}
+	case AppendNormal:
+		{
+			return false
+		}
+	case AppendOutOfDate:
+		{
+			rf.role = Follower
+			rf.votedFor = -1
+			rf.timer.Reset(rf.overtime)
+			rf.currentTerm = reply.Term
+		}
+	}
 	return ok
 }
 
@@ -480,7 +542,7 @@ func (rf *Raft) ticker() {
 							LastLogTerm:  0,
 						}
 						if lastlogidx >= 0 {
-							voteArgs.LastLogTerm = rf.logs[lastlogidx].term
+							voteArgs.LastLogTerm = rf.logs[lastlogidx].Term
 						}
 
 						voteReply := RequestVoteReply{}
