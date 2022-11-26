@@ -108,6 +108,7 @@ type Raft struct {
 	lastApplied int //已经被应用到状态机中的logs下标，所以有lastApplied<=commitIndex
 
 	//Leader node variable
+	//TODO: 不用Slice，改用map[int]int存储, matchIndex没用上?
 	nextIndex  []int //对于每一个node，需要发给它的下一个log entry的下标
 	matchIndex []int //对于每一个node，已经复制给它的最大log entry下标
 
@@ -235,8 +236,6 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	//server挂掉了
 	if rf.killed() {
 		reply.Term = -1
@@ -245,6 +244,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	//候选人的任期比自己还小，不投票
 	if args.Term < rf.currentTerm {
 		reply.VoteState = Expired
@@ -361,6 +362,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		//假如存在“多余”log entry，丢掉preLogIndex后面的log entry
 		rf.logs = rf.logs[:args.PrevLogIndex]
 		rf.logs = append(rf.logs, args.Entries...)
+		//debug
+		fmt.Printf("Leader[%v] add logs[%v] to Follower[%v]\n", args.LeaderId, args.PrevLogIndex, rf.me)
 	}
 
 	//apply log entry
@@ -371,6 +374,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			Command:      rf.logs[rf.lastApplied-1].Command,
 			CommandIndex: rf.lastApplied,
 		}
+		//TODO: 这里commitIndex和lastApplied要修改一下
 		rf.applyChan <- msg
 		rf.commitIndex = rf.lastApplied
 		//debug
@@ -449,6 +453,8 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 			}
 			//获得了超过一半的选票，变成leader
 			if *getVoted > (len(rf.peers) / 2) {
+				//防止多次执行
+				*getVoted = 0
 				//debug
 				fmt.Printf("rf[%v] becomes leader!\n", rf.me)
 
@@ -456,6 +462,8 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 				rf.nextIndex = make([]int, len(rf.peers))
 				for idx := range rf.nextIndex {
 					rf.nextIndex[idx] = len(rf.logs) + 1 // 注意这里不是len(rf.logs)，因为logs的索引默认从1开始增加
+					//debug
+					//fmt.Printf("rf.nextIndex[%v]=%v\n", idx, len(rf.logs)+1)
 				}
 				rf.timer.Reset(HeartBeatTimeout)
 			}
@@ -501,8 +509,8 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 			rf.nextIndex[server] += len(args.Entries)
 
 			//超过半数拥有log，可以提交了
-			if *appSucess > len(rf.peers)/2 {
-				*appSucess = -1
+			if *appSucess > (len(rf.peers) / 2) {
+				*appSucess = 0
 
 				if len(rf.logs) == 0 || rf.logs[len(rf.logs)-1].Term != rf.currentTerm {
 					return false
@@ -588,6 +596,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.logs = append(rf.logs, log)
 	index = len(rf.logs) - 1
 	term = rf.currentTerm
+
+	fmt.Printf("index:%v\n", index)
 
 	return index, term, isLeader
 }
