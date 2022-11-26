@@ -277,7 +277,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			rf.timer.Reset(rf.overtime)
 
 			//debug
-			// fmt.Printf("[	    func-RequestVote-rf(%v)		] : has voted for rf[%v]\n", rf.me, rf.votedFor)
+			// fmt.Printf("[func-RequestVote] : {rf[%v] has voted for rf[%v]}\n", rf.me, rf.votedFor)
 		} else {
 			//候选人的logs没自己的新，不给票
 			reply.VoteState = Expired
@@ -328,8 +328,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.timer.Reset(rf.overtime)
 
 	//处理log entries
-
-
 
 	//对reply赋值
 	reply.AppendState = AppendNormal
