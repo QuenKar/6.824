@@ -380,9 +380,12 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	defer rf.mu.Unlock()
 
 	// 请求投票的人term比自己还小，直接返回？这段代码应该放在这里吗？
-	// if args.Term < rf.currentTerm {
-	// 	return false
-	// }
+	// 这里处理的情况是：candidate发送RequestVote投票后，被别的候选人
+	// 抢先变成leader，然后自己的任期已经更新的比
+	// 发送RequestVote时要大了，直接放弃本次竞选
+	if args.Term < rf.currentTerm {
+		return false
+	}
 
 	//对reply做处理
 	switch reply.VoteState {
@@ -403,6 +406,9 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 			}
 			//获得了超过一半的选票，变成leader
 			if *getVoted > (len(rf.peers) / 2) {
+				//debug
+				fmt.Printf("rf[%v] becomes leader!\n", rf.me)
+
 				rf.role = Leader
 				rf.nextIndex = make([]int, len(rf.peers))
 				for idx := range rf.nextIndex {
