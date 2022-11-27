@@ -17,6 +17,10 @@ package raft
 //   in the same server.
 //
 
+//2B note
+//注意logs数组，PrevLogIndex，commitIndex，lastApplied的下标问题。
+//还有 rf.mu 相关的锁问题，防止死锁发生。
+
 import (
 	//	"bytes"
 
@@ -30,15 +34,6 @@ import (
 	"6.824/labrpc"
 )
 
-// as each Raft peer becomes aware that successive log entries are
-// committed, the peer should send an ApplyMsg to the service (or
-// tester) on the same server, via the applyCh passed to Make(). set
-// CommandValid to true to indicate that the ApplyMsg contains a newly
-// committed log entry.
-//
-// in part 2D you'll want to send other kinds of messages (e.g.,
-// snapshots) on the applyCh, but set CommandValid to false for these
-// other uses.
 type Status int
 
 type VoteState int
@@ -67,6 +62,16 @@ const (
 	AppendCommited                            //追加的log entries已经提交
 	AppendMismatch                            //log entries不匹配
 )
+
+// as each Raft peer becomes aware that successive log entries are
+// committed, the peer should send an ApplyMsg to the service (or
+// tester) on the same server, via the applyCh passed to Make(). set
+// CommandValid to true to indicate that the ApplyMsg contains a newly
+// committed log entry.
+//
+// in part 2D you'll want to send other kinds of messages (e.g.,
+// snapshots) on the applyCh, but set CommandValid to false for these
+// other uses.
 
 type ApplyMsg struct {
 	CommandValid bool
@@ -112,7 +117,7 @@ type Raft struct {
 	nextIndex  []int //对于每一个node，需要发给它的下一个log entry的下标
 	matchIndex []int //对于每一个node，已经复制给它的最大log entry下标
 
-	role     Status        //node 的角色 leader follower candidate
+	role     Status        //node 的角色： leader follower candidate
 	overtime time.Duration //超时时间
 	timer    *time.Ticker  //计时器
 
@@ -144,6 +149,10 @@ type AppendEntriesReply struct {
 // believes it is the leader.
 // return : (term, isleader)
 func (rf *Raft) GetState() (int, bool) {
+
+	//查询rf状态时，必须要上锁，不然TestBackup2B会出现死锁
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	var term int
 	var isleader bool
@@ -334,8 +343,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//处理log entries
 
 	//if conflict
-	//1.PreLogindex超过了自己logs的长度，表示中间有漏掉的log entries，理想情况下应当等于logs最右的下标
-	//2.PreLogTerm不相同
+	//1. PreLogindex超过了自己logs的长度，表示中间有漏掉的log entries，理想情况下PreLogindex应当等于logs最右的下标
+	//2. RPC中的PreLogTerm和自己日志中的Term不相同
 	if args.PrevLogIndex > 0 && (len(rf.logs) < args.PrevLogIndex ||
 		rf.logs[args.PrevLogIndex-1].Term != args.PrevLogTerm) {
 		reply.AppendState = AppendMismatch
@@ -363,6 +372,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.logs = rf.logs[:args.PrevLogIndex]
 		rf.logs = append(rf.logs, args.Entries...)
 		//debug
+		//fmt.Print(len(rf.logs))
 		fmt.Printf("Leader[%v] add logs[%v] to Follower[%v]\n", args.LeaderId, args.PrevLogIndex, rf.me)
 	}
 
@@ -475,16 +485,16 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply, appSucess *int) bool {
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply, appSucess *int) {
 
 	if rf.killed() {
-		return false
+		return
 	}
-	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	for !ok {
 		if rf.killed() {
-			return false
+			return
 		}
 		ok = rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	}
@@ -495,7 +505,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	switch reply.AppendState {
 	case AppendKilled:
 		{
-			return false
+			return
 		}
 	case AppendNormal:
 		{
@@ -504,7 +514,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 			}
 
 			if rf.nextIndex[server] > len(rf.logs)+1 {
-				return false
+				return
 			}
 			rf.nextIndex[server] += len(args.Entries)
 
@@ -512,8 +522,9 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 			if *appSucess > (len(rf.peers) / 2) {
 				*appSucess = 0
 
+				//如何最后一个日志term和当前的term已经不同了
 				if len(rf.logs) == 0 || rf.logs[len(rf.logs)-1].Term != rf.currentTerm {
-					return false
+					return
 				}
 
 				for rf.lastApplied < len(rf.logs) {
@@ -530,7 +541,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 					fmt.Printf("Leader rf[%v] apply log[%v]\n", rf.me, rf.lastApplied)
 				}
 			}
-			return false
+			return
 		}
 	//出现网络分区，从新的leader接收到了更新的term RPC，变成follwer
 	case AppendOutOfDate:
@@ -543,7 +554,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	case AppendMismatch, AppendCommited:
 		{
 			if args.Term != rf.currentTerm {
-				return false
+				return
 			}
 			rf.nextIndex[server] = reply.UpdateNextIndex
 		}
@@ -552,7 +563,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 	}
 
-	return ok
+	return
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -594,10 +605,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	rf.logs = append(rf.logs, log)
-	index = len(rf.logs) - 1
+	index = len(rf.logs)
 	term = rf.currentTerm
-
-	fmt.Printf("index:%v\n", index)
+	//debug
+	// fmt.Printf("index:%v\n", index)
 
 	return index, term, isLeader
 }
@@ -634,6 +645,7 @@ func (rf *Raft) ticker() {
 		// time.Sleep().
 
 		select {
+
 		case <-rf.timer.C:
 			if rf.killed() {
 				return
@@ -662,7 +674,7 @@ func (rf *Raft) ticker() {
 						voteArgs := RequestVoteArgs{
 							Term:         rf.currentTerm,
 							CandidateId:  rf.me,
-							LastLogIndex: lastlogidx,
+							LastLogIndex: len(rf.logs),
 							LastLogTerm:  0,
 						}
 						if lastlogidx >= 0 {
@@ -680,8 +692,8 @@ func (rf *Raft) ticker() {
 				//这个是不是应该用原子类型，多个线程共用这个
 				appSuccess := 1
 				//send heartbeat to other servers
-				for idx := range rf.peers {
-					if idx != rf.me {
+				for i := range rf.peers {
+					if i != rf.me {
 						//发送心跳包或者AppendEntries
 						args := AppendEntriesArgs{
 							Term:         rf.currentTerm,
@@ -694,17 +706,17 @@ func (rf *Raft) ticker() {
 
 						reply := AppendEntriesReply{}
 
-						args.Entries = rf.logs[rf.nextIndex[idx]-1:]
+						args.Entries = rf.logs[rf.nextIndex[i]-1:]
 
-						if rf.nextIndex[idx] > 0 {
-							args.PrevLogIndex = rf.nextIndex[idx] - 1
+						if rf.nextIndex[i] > 0 {
+							args.PrevLogIndex = rf.nextIndex[i] - 1
 						}
 
 						if args.PrevLogIndex > 0 {
 							args.PrevLogTerm = rf.logs[args.PrevLogIndex-1].Term
 						}
 
-						go rf.sendAppendEntries(idx, &args, &reply, &appSuccess)
+						go rf.sendAppendEntries(i, &args, &reply, &appSuccess)
 
 					}
 
