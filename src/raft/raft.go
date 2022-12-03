@@ -293,6 +293,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.role = Follower
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
+		rf.persist()
 	}
 
 	//候选人的和自己的Term一样的情况下
@@ -311,10 +312,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			reply.VoteState = Expired
 			reply.VoteGranted = false
 			reply.Term = rf.currentTerm
+			// rf.persist()
 			return
 		}
 		//符合条件，给票
 		rf.votedFor = args.CandidateId
+		rf.persist()
 		reply.VoteState = Normal
 		reply.VoteGranted = true
 		reply.Term = args.Term
@@ -398,8 +401,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.logs = append(rf.logs, args.Entries...)
 		//debug
 		//fmt.Print(len(rf.logs))
-		fmt.Printf("Leader[%v] add logs[%v] to Follower[%v]\n", args.LeaderId, args.PrevLogIndex, rf.me)
+		// fmt.Printf("Leader[%v] add logs[%v] to Follower[%v]\n", args.LeaderId, args.PrevLogIndex, rf.me)
 	}
+	//持久化更新的state
+	rf.persist()
 
 	//apply log entry
 	for rf.lastApplied < args.LeaderCommit {
@@ -413,7 +418,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.applyChan <- msg
 		rf.commitIndex = rf.lastApplied
 		//debug
-		fmt.Printf("Follower rf[%v] apply log[%v]\n", rf.me, rf.lastApplied)
+		// fmt.Printf("Follower rf[%v] apply log[%v]\n", rf.me, rf.lastApplied)
 	}
 
 }
@@ -478,6 +483,8 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
 				rf.votedFor = -1
+				//持久化更新的state
+				rf.persist()
 			}
 		}
 
@@ -491,7 +498,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 				//防止多次执行
 				*getVoted = 0
 				//debug
-				fmt.Printf("rf[%v] becomes leader!\n", rf.me)
+				// fmt.Printf("rf[%v] becomes leader!\n", rf.me)
 
 				rf.role = Leader
 				rf.nextIndex = make([]int, len(rf.peers))
@@ -563,23 +570,31 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 					rf.applyChan <- msg
 					rf.commitIndex = rf.lastApplied
 					//debug
-					fmt.Printf("Leader rf[%v] apply log[%v]\n", rf.me, rf.lastApplied)
+					// fmt.Printf("Leader rf[%v] apply log[%v]\n", rf.me, rf.lastApplied)
 				}
 			}
 			return
 		}
-	//出现网络分区，从新的leader接收到了更新的term RPC，变成follwer
 	case AppendOutOfDate:
 		{
+			//出现网络分区，从新的leader接收到了更新的term RPC，变成follwer
 			rf.role = Follower
 			rf.votedFor = -1
 			rf.timer.Reset(rf.overtime)
 			rf.currentTerm = reply.Term
+			//持久化更新的state
+			rf.persist()
 		}
 	case AppendMismatch, AppendCommited:
 		{
-			if args.Term != rf.currentTerm {
-				return
+			//不匹配的情况
+			if reply.Term > rf.currentTerm {
+				rf.role = Follower
+				rf.votedFor = -1
+				rf.timer.Reset(rf.overtime)
+				rf.currentTerm = reply.Term
+				//持久化更新的state
+				rf.persist()
 			}
 			rf.nextIndex[server] = reply.UpdateNextIndex
 		}
@@ -587,7 +602,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		fmt.Printf("unknown error happens in func-sendAppendEntries\n")
 
 	}
-
 	return
 }
 
@@ -632,6 +646,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.logs = append(rf.logs, log)
 	index = len(rf.logs)
 	term = rf.currentTerm
+
+	rf.persist()
 	//debug
 	// fmt.Printf("index:%v\n", index)
 
@@ -679,6 +695,7 @@ func (rf *Raft) ticker() {
 			rf.mu.Lock()
 
 			switch rf.role {
+				
 			case Follower:
 				rf.role = Candidate
 				//直接进入Candidate部分，不检查条件
@@ -686,6 +703,9 @@ func (rf *Raft) ticker() {
 			case Candidate:
 				rf.currentTerm += 1
 				rf.votedFor = rf.me
+				//持久化更新的state
+				rf.persist()
+
 				//这里需不需要再次rand overtime？yes!
 				rf.overtime = time.Duration(150+rand.Intn(201)) * time.Millisecond
 				rf.timer.Reset(rf.overtime)
