@@ -21,6 +21,12 @@ package raft
 //注意logs数组，PrevLogIndex，commitIndex，lastApplied的下标问题。
 //还有 rf.mu 相关的锁问题，防止死锁发生。
 
+//2C note
+//注意rf.persist()放置的位置，其它的照着样例写就行
+//测试的时候TestFigure82C和TestFigure8Unreliable2C
+//在1000此循环下无法通过，但是100次可以通过，因为触发了测试30s的超时
+//代码逻辑上应该没什么问题，后续代码要优化一下速度
+
 import (
 	//	"bytes"
 
@@ -695,7 +701,7 @@ func (rf *Raft) ticker() {
 			rf.mu.Lock()
 
 			switch rf.role {
-				
+
 			case Follower:
 				rf.role = Candidate
 				//直接进入Candidate部分，不检查条件
