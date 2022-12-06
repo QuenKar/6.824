@@ -56,7 +56,7 @@ const (
 )
 
 const (
-	HeartBeatInterval = 100 //心跳间隔时间
+	HeartBeatInterval = 120 //心跳间隔时间
 	AppliedInterval   = 30  //检查是否可以把command应用到状态机的时间间隔
 )
 
@@ -159,15 +159,13 @@ type RequestVoteReply struct {
 // ********************日志复制(Log replication) RPC********************
 // 如果Entries是nil，就当作heartbeat
 type AppendEntriesArgs struct {
-	Term     int //leader's term
-	LeaderId int //leader id
-
+	Term         int //leader's term
+	LeaderId     int //leader id
 	PrevLogIndex int //前一个处理的log entry的下标
 	PrevLogTerm  int //前一个处理的log entry的任期
+	LeaderCommit int //leader commited index
 
 	Entries []LogEntry //leader发送的log entries，如果为空，就当作heartbeat使用
-
-	LeaderCommit int //leader commited index
 
 }
 
@@ -460,6 +458,8 @@ func (rf *Raft) electionTicker() {
 			rf.persist()
 
 			//发起选举
+			//debug
+			fmt.Printf("server[%v] holds an election\n", rf.me)
 			rf.holdElection()
 
 			//更新计时器
@@ -575,6 +575,9 @@ func (rf *Raft) holdElection() {
 					rf.getVoted += 1
 
 					if rf.getVoted > len(rf.peers)/2 {
+						//debug
+						fmt.Printf("rf[%v] becomes Leader\n", rf.me)
+
 						//超过半数同意，变成leader
 						rf.role = Leader
 						rf.votedFor = -1
@@ -661,7 +664,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 
 	//debug
-	//fmt.Printf("in term[%v]:{rf[%v] has voted for rf[%v]}\n", rf.currentTerm, rf.me, rf.votedFor)
+	fmt.Printf("in term[%v]:{rf[%v] has voted for rf[%v]}\n", rf.currentTerm, rf.me, rf.votedFor)
 
 	return
 
@@ -700,6 +703,7 @@ func (rf *Raft) leaderAppendEntries() {
 				LeaderId:     rf.me,
 				PrevLogIndex: prevLogIndex,
 				PrevLogTerm:  prevLogTerm,
+				LeaderCommit: rf.commitIndex,
 			}
 			reply := AppendEntriesReply{}
 			if rf.getLastLogIndex() >= rf.nextIndex[serverId] {
@@ -734,10 +738,10 @@ func (rf *Raft) leaderAppendEntries() {
 				}
 
 				if reply.Success {
-					//if heartbeat,return directly
-					if args.Entries == nil {
-						return
-					}
+					//if heartbeat,return directly   It's wrong 心跳包可以用来更新commitIndex
+					// if args.Entries == nil {
+					// 	return
+					// }
 
 					rf.matchIndex[serverId] = args.PrevLogIndex + len(args.Entries)
 					rf.nextIndex[serverId] = rf.matchIndex[serverId] + 1
@@ -754,13 +758,13 @@ func (rf *Raft) leaderAppendEntries() {
 							if rf.matchIndex[p] >= idx {
 								sum += 1
 							}
-							//over half servers have this log,update commitIndex
-							if sum > len(rf.peers)/2 && rf.getRealLogTerm(idx) == rf.currentTerm {
-								//debug
-								fmt.Printf("leader'commitIndex is %v\n", idx)
-								rf.commitIndex = idx
-								break
-							}
+						}
+						//over half servers have this log,update commitIndex
+						if sum > len(rf.peers)/2 && rf.getRealLogTerm(idx) == rf.currentTerm {
+							//debug
+							fmt.Printf("leader'commitIndex is %v\n", idx)
+							rf.commitIndex = idx
+							break
 						}
 					}
 
@@ -848,15 +852,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.logs = rf.logs[:args.PrevLogIndex-rf.lastIncludedIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
 		//debug
-		//fmt.Print(len(rf.logs))
 		fmt.Printf("Leader[%v] add logs[%v] to Follower[%v]\n", args.LeaderId, args.PrevLogIndex+1, rf.me)
+		fmt.Printf("Follower[%v] logs is %v\n", rf.me, rf.logs)
 	}
 	//持久化更新的state
 	rf.persist()
 
 	//update commitIndex
+	//debug
+	// fmt.Printf("follower update commitIndex\n")
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(rf.getLastLogIndex(), args.LeaderCommit)
+		//debug
+		fmt.Printf("follower[%v]'commitIndex is %v\n", rf.me, rf.commitIndex)
 	}
 
 }
