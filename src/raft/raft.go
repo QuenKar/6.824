@@ -121,9 +121,9 @@ type Raft struct {
 	nextIndex  []int //对于每一个node，需要发给它的下一个log entry的下标
 	matchIndex []int //对于每一个node，已经复制给它的最大log entry下标
 
-	role            Status        //node 的角色： leader follower candidate
-	electionTimeout time.Time     //计时器
-	getVoted        int           //拿到的票数
+	role            Status    //node 的角色： leader follower candidate
+	electionTimeout time.Time //计时器
+	getVoted        int       //拿到的票数
 
 	applyChan chan ApplyMsg //从client获取的command，保存在channel里面
 
@@ -664,8 +664,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	//debug
 	fmt.Printf("in term[%v]:{rf[%v] has voted for rf[%v]}\n", rf.currentTerm, rf.me, rf.votedFor)
-
-	return
 
 }
 
