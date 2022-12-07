@@ -349,8 +349,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	if !rf.IsLeader() {
 		return index, term, false
 	}
-
-	fmt.Printf("[func-Start]:generate a new log\n")
+	//debug
+	// fmt.Printf("[func-Start]:generate a new log\n")
 	isLeader = true
 
 	//生成追加日志
@@ -365,7 +365,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	rf.persist()
 	//debug
-	fmt.Printf("the new log index is %v\n", index)
+	fmt.Printf("rf[%v]:generate new log index is %v\n", rf.me, index)
 
 	return index, term, isLeader
 }
@@ -459,7 +459,7 @@ func (rf *Raft) electionTicker() {
 
 			//发起选举
 			//debug
-			fmt.Printf("server[%v] holds an election\n", rf.me)
+			fmt.Printf("rf[%v] holds an election\n", rf.me)
 			rf.holdElection()
 
 			//更新计时器
@@ -519,7 +519,7 @@ func (rf *Raft) appliedTicker() {
 		//send applymsg to ApplyChan
 		for _, v := range msgs {
 			//debug
-			fmt.Printf("ApplyMsg%v has apply to Chan\n", v)
+			// fmt.Printf("rf[%v]:ApplyMsg%v has apply to Chan\n", rf.me, v)
 			rf.applyChan <- v
 		}
 	}
@@ -738,16 +738,17 @@ func (rf *Raft) leaderAppendEntries() {
 				}
 
 				if reply.Success {
-					//if heartbeat,return directly   It's wrong 心跳包可以用来更新commitIndex
-					// if args.Entries == nil {
-					// 	return
-					// }
+					//if heartbeat, return directly
+					if args.Entries == nil {
+						return
+					}
 
+					//update matchIndex and nextIndex
 					rf.matchIndex[serverId] = args.PrevLogIndex + len(args.Entries)
 					rf.nextIndex[serverId] = rf.matchIndex[serverId] + 1
-					//init commitIndex
-					rf.commitIndex = rf.lastIncludedIndex
+
 					//update commitIndex
+					rf.commitIndex = rf.lastIncludedIndex //init commitIndex
 					for idx := rf.getLastLogIndex(); idx > rf.lastIncludedIndex; idx-- {
 						sum := 0
 						for p := range rf.peers {
@@ -762,12 +763,11 @@ func (rf *Raft) leaderAppendEntries() {
 						//over half servers have this log,update commitIndex
 						if sum > len(rf.peers)/2 && rf.getRealLogTerm(idx) == rf.currentTerm {
 							//debug
-							fmt.Printf("leader'commitIndex is %v\n", idx)
+							// fmt.Printf("leader'commitIndex is %v\n", idx)
 							rf.commitIndex = idx
 							break
 						}
 					}
-
 				} else {
 					//logs有冲突
 					if reply.UpdateNextIndex != -1 {
@@ -831,15 +831,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		//2. RPC中的PreLogTerm和自己日志中的Term不相同,往前找前一个任期
 		if rf.getRealLogTerm(args.PrevLogIndex) != args.PrevLogTerm {
 			//debug
-			fmt.Println("[func-AppendEntries]:find forward term to update next index")
+			fmt.Printf("rf[%v]:[func-AppendEntries]:update next index\n", rf.me)
 			reply.Success = false
 			tmpTerm := rf.getRealLogTerm(args.PrevLogIndex)
-			for i := args.PrevLogIndex; i > rf.lastIncludedIndex; i-- {
+			//debug
+			// fmt.Printf("tempTerm=%v\n", tmpTerm)
+			// fmt.Printf("PrevLogIndex=%v\n", args.PrevLogIndex)
+			//默认为自己快照的下一个index
+			reply.UpdateNextIndex = rf.lastIncludedIndex + 1
+			for i := args.PrevLogIndex; i >= rf.lastIncludedIndex; i-- {
 				if rf.getRealLogTerm(i) != tmpTerm {
 					reply.UpdateNextIndex = i + 1
+					//debug
+					// fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
 					break
 				}
 			}
+			//debug
+			// fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
+			return
 		}
 	}
 	//debug
@@ -852,8 +862,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.logs = rf.logs[:args.PrevLogIndex-rf.lastIncludedIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
 		//debug
-		fmt.Printf("Leader[%v] add logs[%v] to Follower[%v]\n", args.LeaderId, args.PrevLogIndex+1, rf.me)
-		fmt.Printf("Follower[%v] logs is %v\n", rf.me, rf.logs)
+		// fmt.Printf("Leader[%v] add logs[%v] to Follower[%v]\n", args.LeaderId, args.PrevLogIndex+1, rf.me)
+		// fmt.Printf("Follower[%v] logs is %v\n", rf.me, rf.logs)
+
 	}
 	//持久化更新的state
 	rf.persist()
@@ -864,7 +875,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(rf.getLastLogIndex(), args.LeaderCommit)
 		//debug
-		fmt.Printf("follower[%v]'commitIndex is %v\n", rf.me, rf.commitIndex)
+		fmt.Printf("follower[%v]'commitIndex is updated to %v \n", rf.me, rf.commitIndex)
 	}
 
 }
