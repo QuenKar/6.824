@@ -122,7 +122,6 @@ type Raft struct {
 	matchIndex []int //对于每一个node，已经复制给它的最大log entry下标
 
 	role            Status        //node 的角色： leader follower candidate
-	overtime        time.Duration //超时时间
 	electionTimeout time.Time     //计时器
 	getVoted        int           //拿到的票数
 
