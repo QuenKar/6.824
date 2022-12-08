@@ -17,6 +17,12 @@ package raft
 //   in the same server.
 //
 
+//2A note
+//领导选举照着论文实现没什么大问题
+//主要是下面这句话的"up-to-date"具体如何判断？
+// If votedFor is null or candidateId, and candidate’s log is at
+// least as up-to-date as receiver’s log, grant vote (§5.2, §5.4)
+
 //2B note
 //注意logs数组，PrevLogIndex，commitIndex，lastApplied的下标问题。
 //还有 rf.mu 相关的锁问题，防止死锁发生。
@@ -26,6 +32,11 @@ package raft
 //测试的时候TestFigure82C和TestFigure8Unreliable2C
 //在1000此循环下无法通过，但是100次可以通过，因为触发了测试30s的超时
 //代码逻辑上应该没什么问题，后续代码要优化一下速度
+
+//2D note
+//多打日志debug，理解raft执行流程
+//最麻烦的就是下标问题，尤其是snapshot可能直接把logs清空了的情况
+//debug了好久才发现这个bug-_-
 
 import (
 	//	"bytes"
@@ -598,8 +609,6 @@ func (rf *Raft) holdElection() {
 
 						rf.electionTimeout = time.Now()
 
-						//这里不用发送心跳包吗？不用
-
 						rf.mu.Unlock()
 						return
 					}
@@ -682,7 +691,7 @@ func (rf *Raft) leaderAppendEntries() {
 				return
 			}
 
-			//follower的logs太旧了，直接传快照过去
+			//当follower的logs太旧了，直接发送快照过去
 			if rf.nextIndex[serverId]-1 < rf.lastIncludedIndex {
 				go rf.leaderSendSnapshot(serverId)
 				rf.mu.Unlock()
@@ -690,6 +699,7 @@ func (rf *Raft) leaderAppendEntries() {
 			}
 
 			//快照冲突怎么办？
+			//自己存储的snapshot和leader发过来的snapshot是分开的，不会冲突
 
 			prevLogIndex := rf.nextIndex[serverId] - 1
 			if prevLogIndex > rf.getLastLogIndex() {
