@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -14,6 +15,14 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 		log.Printf(format, a...)
 	}
 	return
+}
+
+func (rf *Raft) printLogs(n int) {
+	for i := rf.getLastLogIndex(); i >= 0 && n > 0; i-- {
+		n--
+		fmt.Printf("log{%v:%v}", i, rf.logs[i].Term)
+	}
+	fmt.Println()
 }
 
 func (rf *Raft) IsLeader() bool {
@@ -62,6 +71,7 @@ func (rf *Raft) getRealLog(index int) LogEntry {
 func (rf *Raft) getRealLogTerm(index int) int {
 	//此时logs应当只有一个LogEntry{}
 	if index-rf.lastIncludedIndex == 0 {
+		fmt.Printf("rf[%v]:lastIncludedTerm = %v\n", rf.me, rf.lastIncludedTerm)
 		return rf.lastIncludedTerm
 	}
 	return rf.logs[index-rf.lastIncludedIndex].Term
@@ -70,8 +80,9 @@ func (rf *Raft) getRealLogTerm(index int) int {
 func (rf *Raft) IsCandicateLogsOK(Cindex int, Cterm int) bool {
 	lastIndex := rf.getLastLogIndex()
 	lastTerm := rf.getLastLogTerm()
-	//1.候选人term大于自己，给票
+	//1.候选人最后一个log的term大于自己，给票
 	//2.term相同，但是候选人logs长度>=自己，给票
+
 	return Cterm > lastTerm || (Cterm == lastTerm && Cindex >= lastIndex)
 }
 
