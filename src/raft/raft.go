@@ -315,8 +315,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	if rf.killed() {
 		return false
 	}
-	//debug
-	// fmt.Printf("[func-sendAppendEntries]:start\n")
+
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
@@ -348,7 +347,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	//debug
 	index := -1
 	term := -1
 	isLeader := true
@@ -359,8 +357,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	if !rf.IsLeader() {
 		return index, term, false
 	}
-	//debug
-	// fmt.Printf("[func-Start]:generate a new log\n")
+
 	isLeader = true
 
 	//生成追加日志
@@ -375,7 +372,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	rf.persist()
 	//debug
-	// fmt.Printf("in Term[%v]:rf[%v]:generate new log index is %v\n", rf.currentTerm, rf.me, index)
+	fmt.Printf("in Term[%v]:rf[%v]:generate new log index is %v\n", rf.currentTerm, rf.me, index)
 
 	return index, term, isLeader
 }
@@ -469,9 +466,14 @@ func (rf *Raft) electionTicker() {
 
 			//发起选举
 			//debug
-			// fmt.Printf("in Term[%v]:rf[%v] holds an election\n", rf.currentTerm, rf.me)
+			fmt.Printf("in Term[%v]:rf[%v] holds an election\n", rf.currentTerm, rf.me)
 
 			rf.holdElection()
+
+			//没选上，回到之前的term
+			// if !rf.IsLeader() {
+			// 	rf.currentTerm -= 1
+			// }
 
 			//更新计时器
 			rf.electionTimeout = time.Now()
@@ -486,14 +488,12 @@ func (rf *Raft) electionTicker() {
  */
 func (rf *Raft) appendTicker() {
 	for !rf.killed() {
-		//debug
-		// fmt.Printf("[appendTicker]:start\n")
+
 		time.Sleep(HeartBeatInterval * time.Millisecond)
 		rf.mu.Lock()
 		if rf.IsLeader() {
 			rf.mu.Unlock()
-			//debug
-			// fmt.Printf("[appendTicker]:leader append entries\n")
+
 			rf.leaderAppendEntries()
 			continue
 		}
@@ -587,7 +587,7 @@ func (rf *Raft) holdElection() {
 
 					if rf.getVoted > len(rf.peers)/2 {
 						//debug
-						// fmt.Printf("rf[%v] becomes Leader\n", rf.me)
+						fmt.Printf("rf[%v] becomes Leader\n", rf.me)
 
 						//超过半数同意，变成leader
 						rf.role = Leader
@@ -671,14 +671,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 
 	//debug
-	// fmt.Printf("in term[%v]:{rf[%v] has voted for rf[%v]}\n", rf.currentTerm, rf.me, rf.votedFor)
+	fmt.Printf("in term[%v]:{rf[%v] has voted for rf[%v]}\n", rf.currentTerm, rf.me, rf.votedFor)
 
 }
 
 // ****************************logs replication****************************
 func (rf *Raft) leaderAppendEntries() {
-	//debug
-	// fmt.Printf("[func-leaderAppendEntries]:start\n")
+
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
@@ -725,7 +724,7 @@ func (rf *Raft) leaderAppendEntries() {
 			rf.mu.Unlock()
 
 			//debug
-			// fmt.Printf("args to rf[%v]:%v\n", serverId, args)
+			fmt.Printf("in Term[%v]:rf[%v]'args to rf[%v]:%v\n", rf.currentTerm, rf.me, serverId, args)
 
 			ok := rf.sendAppendEntries(serverId, &args, &reply)
 
@@ -759,7 +758,9 @@ func (rf *Raft) leaderAppendEntries() {
 					rf.nextIndex[serverId] = rf.matchIndex[serverId] + 1
 
 					//update commitIndex
-					rf.commitIndex = rf.lastIncludedIndex //init commitIndex
+					if rf.commitIndex < rf.lastIncludedIndex {
+						rf.commitIndex = rf.lastIncludedIndex
+					}
 					for idx := rf.getLastLogIndex(); idx > rf.lastIncludedIndex; idx-- {
 						sum := 0
 						for p := range rf.peers {
@@ -774,8 +775,11 @@ func (rf *Raft) leaderAppendEntries() {
 						//over half servers have this log,update commitIndex
 						if sum > len(rf.peers)/2 && rf.getRealLogTerm(idx) == rf.currentTerm {
 							//debug
-							// fmt.Printf("leader'commitIndex is %v\n", idx)
-							rf.commitIndex = idx
+							fmt.Printf("leader[%v]'commitIndex is %v\n", rf.me, idx)
+							//可能有多个reply返回会先后更新这个字段，只保留最大的commitIndex
+							if idx >= rf.commitIndex {
+								rf.commitIndex = idx
+							}
 							break
 						}
 					}
@@ -793,8 +797,7 @@ func (rf *Raft) leaderAppendEntries() {
 
 // AppendEntries RPC handler
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	//debug
-	// fmt.Printf("[func-AppendEntries]:start\n")
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -836,20 +839,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//1. PreLogindex超过了自己logs的长度，表示中间有漏掉的log entries，理想情况下PreLogindex应当等于logs最右的下标
 	if rf.getLastLogIndex() < args.PrevLogIndex {
 		//debug
-		// fmt.Printf("rf[%v]:[func-AppendEntries]:lost logs\n", rf.me)
+		fmt.Printf("rf[%v]:[func-AppendEntries]:lost logs\n", rf.me)
 		reply.Success = false
 		reply.UpdateNextIndex = rf.getLastLogIndex() + 1
 		//debug
-		// fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
+		fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
 		return
 	} else {
 		//2. RPC中的PreLogTerm和自己日志中的Term不相同,往前找前一个任期
 		if rf.getRealLogTerm(args.PrevLogIndex) != args.PrevLogTerm {
 			//debug
-			// fmt.Printf("rf[%v]:[func-AppendEntries]:update nextIndex\n", rf.me)
+			fmt.Printf("rf[%v]:[func-AppendEntries]:update nextIndex\n", rf.me)
 			reply.Success = false
 			tmpTerm := rf.getRealLogTerm(args.PrevLogIndex)
-			// fmt.Printf("args.PrevLogIndex = %v ,args.PrevLogTerm = %v,follower[%v]:real PreLogTerm = %v\n", args.PrevLogIndex, args.PrevLogTerm, rf.me, tmpTerm)
+			fmt.Printf("args.PrevLogIndex = %v ,args.PrevLogTerm = %v,follower[%v]:real PreLogTerm = %v\n", args.PrevLogIndex, args.PrevLogTerm, rf.me, tmpTerm)
 			//debug
 			// fmt.Printf("tempTerm=%v\n", tmpTerm)
 			// fmt.Printf("PrevLogIndex=%v\n", args.PrevLogIndex)
@@ -864,14 +867,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				}
 			}
 			//debug
-			// fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
+			fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
 			return
 		}
 	}
 	//debug
-	// if args.Entries == nil {
-	// 	fmt.Println("heartbeat")
-	// }
+	if args.Entries == nil {
+		fmt.Println("heartbeat")
+	}
 
 	if args.Entries != nil {
 		//假如存在“多余”log entry，丢掉preLogIndex后面的log entry
@@ -891,7 +894,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(rf.getLastLogIndex(), args.LeaderCommit)
 		//debug
-		// fmt.Printf("follower[%v]'commitIndex is updated to %v \n", rf.me, rf.commitIndex)
+		fmt.Printf("follower[%v]'commitIndex is updated to %v \n", rf.me, rf.commitIndex)
 	}
 
 }
@@ -944,7 +947,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.persist()
 
 	//debug
-	// fmt.Printf("in Term[%v]:rf[%v]:SnapShot to %v\n", rf.currentTerm, rf.me, rf.lastIncludedIndex)
+	fmt.Printf("in Term[%v]:rf[%v]:SnapShot to %v\n", rf.currentTerm, rf.me, rf.lastIncludedIndex)
 }
 
 // leader 发送给 follower snapshot

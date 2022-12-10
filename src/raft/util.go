@@ -71,6 +71,7 @@ func (rf *Raft) getRealLog(index int) LogEntry {
 func (rf *Raft) getRealLogTerm(index int) int {
 	//此时logs应当只有一个LogEntry{}
 	if index-rf.lastIncludedIndex == 0 {
+		//debug
 		fmt.Printf("rf[%v]:lastIncludedTerm = %v\n", rf.me, rf.lastIncludedTerm)
 		return rf.lastIncludedTerm
 	}
@@ -87,8 +88,8 @@ func (rf *Raft) IsCandicateLogsOK(Cindex int, Cterm int) bool {
 }
 
 func min(a int, b int) int {
-	if a >= b {
-		return a
+	if a > b {
+		return b
 	}
-	return b
+	return a
 }
