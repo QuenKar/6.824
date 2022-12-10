@@ -17,6 +17,13 @@ package raft
 //   in the same server.
 //
 
+//note:测试的时候直接用官网的命令行
+//因为VSCode Golang 单元测试时默认 timeout 30s超时
+//也可以通过修改设置解决
+//{
+//    "go.testTimeout": "1h"
+//}
+
 //2A note
 //领导选举照着论文实现没什么大问题
 //主要是下面这句话的"up-to-date"具体如何判断？
@@ -32,6 +39,9 @@ package raft
 //测试的时候TestFigure82C和TestFigure8Unreliable2C
 //在1000此循环下无法通过，但是100次可以通过，因为触发了测试30s的超时
 //代码逻辑上应该没什么问题，后续代码要优化一下速度
+
+//之前使用的是select{} 运行速度上有问题
+//后面改用三个协程ticker，没什么问题了
 
 //2D note
 //多打日志debug，理解raft执行流程
