@@ -372,7 +372,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	rf.persist()
 	//debug
-	fmt.Printf("in Term[%v]:rf[%v]:generate new log index is %v\n", rf.currentTerm, rf.me, index)
+	// fmt.Printf("in Term[%v]:rf[%v]:generate new log index is %v\n", rf.currentTerm, rf.me, index)
 
 	return index, term, isLeader
 }
@@ -458,19 +458,20 @@ func (rf *Raft) electionTicker() {
 		//当voted
 		if rf.electionTimeout.Before(nowTime) && !rf.IsLeader() {
 			//变成candidate
-			rf.role = Candidate
 			rf.currentTerm += 1
+			rf.role = Candidate
 			rf.votedFor = rf.me
 			rf.getVoted = 1
 			rf.persist()
 
 			//发起选举
 			//debug
-			fmt.Printf("in Term[%v]:rf[%v] holds an election\n", rf.currentTerm, rf.me)
+			// fmt.Printf("in Term[%v]:rf[%v] holds an election\n", rf.currentTerm, rf.me)
 
 			rf.holdElection()
 
-			//没选上，回到之前的term
+			//没选上的话，要不要回到之前的term?
+			//没必要这样,term作用类似于逻辑时钟,保证单调递增就行
 			// if !rf.IsLeader() {
 			// 	rf.currentTerm -= 1
 			// }
@@ -572,11 +573,8 @@ func (rf *Raft) holdElection() {
 					if rf.currentTerm < reply.Term {
 						rf.currentTerm = reply.Term
 					}
-					rf.role = Follower
-					rf.votedFor = -1
-					rf.getVoted = 0
-					rf.electionTimeout = time.Now()
-					rf.persist()
+
+					rf.setState(Follower, -1, 0, true)
 
 					rf.mu.Unlock()
 					return
@@ -587,14 +585,15 @@ func (rf *Raft) holdElection() {
 
 					if rf.getVoted > len(rf.peers)/2 {
 						//debug
-						fmt.Printf("rf[%v] becomes Leader\n", rf.me)
+						// fmt.Printf("rf[%v] becomes Leader\n", rf.me)
 
 						//超过半数同意，变成leader
-						rf.role = Leader
-						rf.votedFor = -1
-						rf.getVoted = 0
+						rf.setState(Leader, -1, 0, false)
+						// rf.role = Leader
+						// rf.votedFor = -1
+						// rf.getVoted = 0
+						// rf.persist()
 
-						rf.persist()
 						//init nextIndex
 						rf.nextIndex = make([]int, len(rf.peers))
 						for i := range rf.peers {
@@ -646,11 +645,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	//收到的RPC任期>自己的当前任期，重制自己状态
 	if args.Term > rf.currentTerm {
-		rf.role = Follower
 		rf.currentTerm = args.Term
-		rf.votedFor = -1
-		rf.getVoted = 0
-		rf.persist()
+		rf.setState(Follower, -1, 0, false)
 	}
 
 	//不给票
@@ -671,7 +667,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 
 	//debug
-	fmt.Printf("in term[%v]:{rf[%v] has voted for rf[%v]}\n", rf.currentTerm, rf.me, rf.votedFor)
+	// fmt.Printf("in term[%v]:{rf[%v] has voted for rf[%v]}\n", rf.currentTerm, rf.me, rf.votedFor)
 
 }
 
@@ -724,7 +720,7 @@ func (rf *Raft) leaderAppendEntries() {
 			rf.mu.Unlock()
 
 			//debug
-			fmt.Printf("in Term[%v]:rf[%v]'args to rf[%v]:%v\n", rf.currentTerm, rf.me, serverId, args)
+			// fmt.Printf("in Term[%v]:rf[%v]'args to rf[%v]:%v\n", rf.currentTerm, rf.me, serverId, args)
 
 			ok := rf.sendAppendEntries(serverId, &args, &reply)
 
@@ -739,11 +735,8 @@ func (rf *Raft) leaderAppendEntries() {
 				//网络分区
 				if reply.Term > rf.currentTerm {
 					rf.currentTerm = reply.Term
-					rf.role = Follower
-					rf.votedFor = -1
-					rf.getVoted = 0
-					rf.persist()
-					rf.electionTimeout = time.Now()
+					rf.setState(Follower, -1, 0, true)
+
 					return
 				}
 
@@ -775,7 +768,7 @@ func (rf *Raft) leaderAppendEntries() {
 						//over half servers have this log,update commitIndex
 						if sum > len(rf.peers)/2 && rf.getRealLogTerm(idx) == rf.currentTerm {
 							//debug
-							fmt.Printf("leader[%v]'commitIndex is %v\n", rf.me, idx)
+							// fmt.Printf("leader[%v]'commitIndex is %v\n", rf.me, idx)
 							//可能有多个reply返回会先后更新这个字段，只保留最大的commitIndex
 							if idx >= rf.commitIndex {
 								rf.commitIndex = idx
@@ -817,11 +810,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	//update self's state
 	rf.currentTerm = args.Term
-	rf.votedFor = args.LeaderId
-	rf.role = Follower
-	rf.getVoted = 0
-	rf.persist()
-	rf.electionTimeout = time.Now()
+	rf.setState(Follower, args.LeaderId, 0, true)
 
 	//deal with log entries
 	reply.Term = rf.currentTerm
@@ -839,20 +828,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//1. PreLogindex超过了自己logs的长度，表示中间有漏掉的log entries，理想情况下PreLogindex应当等于logs最右的下标
 	if rf.getLastLogIndex() < args.PrevLogIndex {
 		//debug
-		fmt.Printf("rf[%v]:[func-AppendEntries]:lost logs\n", rf.me)
+		// fmt.Printf("rf[%v]:[func-AppendEntries]:lost logs\n", rf.me)
 		reply.Success = false
 		reply.UpdateNextIndex = rf.getLastLogIndex() + 1
 		//debug
-		fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
+		// fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
 		return
 	} else {
 		//2. RPC中的PreLogTerm和自己日志中的Term不相同,往前找前一个任期
 		if rf.getRealLogTerm(args.PrevLogIndex) != args.PrevLogTerm {
 			//debug
-			fmt.Printf("rf[%v]:[func-AppendEntries]:update nextIndex\n", rf.me)
+			// fmt.Printf("rf[%v]:[func-AppendEntries]:update nextIndex\n", rf.me)
 			reply.Success = false
 			tmpTerm := rf.getRealLogTerm(args.PrevLogIndex)
-			fmt.Printf("args.PrevLogIndex = %v ,args.PrevLogTerm = %v,follower[%v]:real PreLogTerm = %v\n", args.PrevLogIndex, args.PrevLogTerm, rf.me, tmpTerm)
+			// fmt.Printf("args.PrevLogIndex = %v ,args.PrevLogTerm = %v,follower[%v]:real PreLogTerm = %v\n", args.PrevLogIndex, args.PrevLogTerm, rf.me, tmpTerm)
 			//debug
 			// fmt.Printf("tempTerm=%v\n", tmpTerm)
 			// fmt.Printf("PrevLogIndex=%v\n", args.PrevLogIndex)
@@ -867,14 +856,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				}
 			}
 			//debug
-			fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
+			// fmt.Printf("rf[%v]:reply.UpdateNextIndex = %v\n", rf.me, reply.UpdateNextIndex)
 			return
 		}
 	}
-	//debug
-	if args.Entries == nil {
-		fmt.Println("heartbeat")
-	}
+	//debug heartbeat
+	// if args.Entries == nil {
+	// 	fmt.Println("heartbeat")
+	// }
 
 	if args.Entries != nil {
 		//假如存在“多余”log entry，丢掉preLogIndex后面的log entry
@@ -894,7 +883,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(rf.getLastLogIndex(), args.LeaderCommit)
 		//debug
-		fmt.Printf("follower[%v]'commitIndex is updated to %v \n", rf.me, rf.commitIndex)
+		// fmt.Printf("follower[%v]'commitIndex is updated to %v \n", rf.me, rf.commitIndex)
 	}
 
 }
@@ -947,7 +936,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.persist()
 
 	//debug
-	fmt.Printf("in Term[%v]:rf[%v]:SnapShot to %v\n", rf.currentTerm, rf.me, rf.lastIncludedIndex)
+	// fmt.Printf("in Term[%v]:rf[%v]:SnapShot to %v\n", rf.currentTerm, rf.me, rf.lastIncludedIndex)
 }
 
 // leader 发送给 follower snapshot
@@ -978,11 +967,8 @@ func (rf *Raft) leaderSendSnapshot(serverId int) {
 
 		//自己的数据太旧了
 		if reply.Term > rf.currentTerm {
-			rf.role = Follower
-			rf.votedFor = -1
-			rf.getVoted = 0
-			rf.persist()
-			rf.electionTimeout = time.Now()
+			rf.setState(Follower, -1, 0, true)
+
 			return
 		}
 
@@ -1005,11 +991,7 @@ func (rf *Raft) InstallSnapShot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	rf.currentTerm = args.Term
 	reply.Term = rf.currentTerm
 
-	rf.role = Follower
-	rf.votedFor = -1
-	rf.getVoted = 0
-	rf.persist()
-	rf.electionTimeout = time.Now()
+	rf.setState(Follower, -1, 0, true)
 
 	if rf.lastIncludedIndex >= args.LastIncludedIndex {
 		rf.mu.Unlock()

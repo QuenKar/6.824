@@ -72,7 +72,7 @@ func (rf *Raft) getRealLogTerm(index int) int {
 	//此时logs应当只有一个LogEntry{}
 	if index-rf.lastIncludedIndex == 0 {
 		//debug
-		fmt.Printf("rf[%v]:lastIncludedTerm = %v\n", rf.me, rf.lastIncludedTerm)
+		// fmt.Printf("rf[%v]:lastIncludedTerm = %v\n", rf.me, rf.lastIncludedTerm)
 		return rf.lastIncludedTerm
 	}
 	return rf.logs[index-rf.lastIncludedIndex].Term
@@ -92,4 +92,14 @@ func min(a int, b int) int {
 		return b
 	}
 	return a
+}
+
+func (rf *Raft) setState(role Status, votedFor int, getVoted int, updateTime bool) {
+	rf.role = role
+	rf.votedFor = votedFor
+	rf.getVoted = getVoted
+	rf.persist()
+	if updateTime {
+		rf.electionTimeout = time.Now()
+	}
 }
