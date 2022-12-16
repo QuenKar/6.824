@@ -1,12 +1,14 @@
 package kvraft
 
 import (
-	"6.824/labgob"
-	"6.824/labrpc"
-	"6.824/raft"
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
 )
 
 const Debug = false
@@ -18,11 +20,17 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+
+	SeqId    int
+	Key      string
+	Value    string
+	ClientId int64
+	Index    int //from raft service
+	OpType   string
 }
 
 type KVServer struct {
@@ -35,15 +43,96 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	seqMap       map[int64]int     //clientId / seqId
+	waitChMap    map[int]chan Op   // cmd.Index / chan Op
+	kvPersistMap map[string]string //Key / Value
 }
-
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	if kv.killed() || !kv.rf.IsLeader() {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	cmd := Op{
+		OpType:   "Get",
+		SeqId:    args.SeqId,
+		Key:      args.Key,
+		ClientId: args.ClientId,
+	}
+
+	//start a command
+	idx, _, _ := kv.rf.Start(cmd)
+
+	ch := kv.getWaitCh(idx)
+	defer func() {
+		kv.mu.Lock()
+		delete(kv.waitChMap, cmd.Index)
+		kv.mu.Unlock()
+	}()
+
+	timer := time.NewTicker(100 * time.Millisecond)
+	defer timer.Stop()
+
+	select {
+	case replyCmd := <-ch:
+		if replyCmd.ClientId != cmd.ClientId || replyCmd.SeqId != cmd.SeqId {
+			reply.Err = ErrWrongLeader
+		} else {
+			kv.mu.Lock()
+			reply.Err = OK
+			reply.Value = kv.kvPersistMap[args.Key]
+			kv.mu.Unlock()
+			return
+		}
+	case <-timer.C:
+		//over time
+		reply.Err = ErrWrongLeader
+	}
+
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+
+	if kv.killed() || !kv.rf.IsLeader() {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	cmd := Op{
+		OpType:   args.Op,
+		SeqId:    args.SeqId,
+		ClientId: args.ClientId,
+		Key:      args.Key,
+		Value:    args.Value,
+	}
+
+	//start a command
+	idx, _, _ := kv.rf.Start(cmd)
+
+	ch := kv.getWaitCh(idx)
+	defer func() {
+		kv.mu.Lock()
+		delete(kv.waitChMap, cmd.Index)
+		kv.mu.Unlock()
+	}()
+
+	timer := time.NewTicker(100 * time.Millisecond)
+	defer timer.Stop()
+
+	select {
+	case replyCmd := <-ch:
+		if replyCmd.ClientId != cmd.ClientId || replyCmd.SeqId != cmd.SeqId {
+			reply.Err = ErrWrongLeader
+		} else {
+			reply.Err = OK
+		}
+	case <-timer.C:
+		//over time
+		reply.Err = ErrWrongLeader
+	}
 }
 
 //
@@ -96,6 +185,60 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.seqMap = make(map[int64]int)
+	kv.waitChMap = make(map[int]chan Op)
+	kv.kvPersistMap = make(map[string]string)
+
+	go kv.applyMsgHandler()
 
 	return kv
+}
+
+func (kv *KVServer) applyMsgHandler() {
+	for {
+		if kv.killed() {
+			return
+		}
+
+		applyMsg := <-kv.applyCh
+		index := applyMsg.CommandIndex
+		op := applyMsg.Command.(Op)
+
+		if !kv.isDuplicate(op.ClientId, op.SeqId) {
+			kv.mu.Lock()
+			switch op.OpType {
+			case "Put":
+				kv.kvPersistMap[op.Key] = op.Value
+			case "Append":
+				kv.kvPersistMap[op.Key] += op.Value
+			}
+			kv.seqMap[op.ClientId] = op.SeqId
+			kv.mu.Unlock()
+		}
+
+		kv.getWaitCh(index) <- op
+
+	}
+}
+
+func (kv *KVServer) getWaitCh(index int) chan Op {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	ch, ok := kv.waitChMap[index]
+	if !ok {
+		kv.waitChMap[index] = make(chan Op, 1)
+		ch = kv.waitChMap[index]
+	}
+	return ch
+}
+
+func (kv *KVServer) isDuplicate(clientId int64, seqId int) bool {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	lastSeqId, exist := kv.seqMap[clientId]
+	if !exist {
+		return false
+	}
+	return seqId <= lastSeqId
 }
