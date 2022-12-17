@@ -1,6 +1,8 @@
 package kvraft
 
 import (
+	"bytes"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -46,6 +48,8 @@ type KVServer struct {
 	seqMap       map[int64]int     //clientId / seqId
 	waitChMap    map[int]chan Op   // cmd.Index / chan Op
 	kvPersistMap map[string]string //Key / Value
+
+	lastSnapshotIndex int
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -189,6 +193,14 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.waitChMap = make(map[int]chan Op)
 	kv.kvPersistMap = make(map[string]string)
 
+	kv.lastSnapshotIndex = -1
+
+	//if KVServer recovers from a crash
+	snapshot := persister.ReadSnapshot()
+	if len(snapshot) > 0 {
+		kv.DecodeSnapShot(snapshot)
+	}
+
 	go kv.applyMsgHandler()
 
 	return kv
@@ -201,22 +213,45 @@ func (kv *KVServer) applyMsgHandler() {
 		}
 
 		applyMsg := <-kv.applyCh
-		index := applyMsg.CommandIndex
-		op := applyMsg.Command.(Op)
+		if applyMsg.CommandValid {
 
-		if !kv.isDuplicate(op.ClientId, op.SeqId) {
-			kv.mu.Lock()
-			switch op.OpType {
-			case "Put":
-				kv.kvPersistMap[op.Key] = op.Value
-			case "Append":
-				kv.kvPersistMap[op.Key] += op.Value
+			if applyMsg.CommandIndex <= kv.lastSnapshotIndex {
+				return
 			}
-			kv.seqMap[op.ClientId] = op.SeqId
-			kv.mu.Unlock()
+
+			index := applyMsg.CommandIndex
+			op := applyMsg.Command.(Op)
+
+			if !kv.isDup(op.ClientId, op.SeqId) {
+				kv.mu.Lock()
+				switch op.OpType {
+				case "Put":
+					kv.kvPersistMap[op.Key] = op.Value
+				case "Append":
+					kv.kvPersistMap[op.Key] += op.Value
+				}
+				kv.seqMap[op.ClientId] = op.SeqId
+				kv.mu.Unlock()
+			}
+
+			//keep snapshot into rf
+			if kv.lastSnapshotIndex != -1 && kv.rf.GetRaftStateSize() > kv.maxraftstate {
+				kv.rf.Snapshot(applyMsg.CommandIndex, kv.CreateSnapShot())
+			}
+
+			// send op to wait chan
+			kv.getWaitCh(index) <- op
 		}
 
-		kv.getWaitCh(index) <- op
+		//有snapshot，decode it
+		if applyMsg.SnapshotValid {
+			kv.mu.Lock()
+
+			kv.DecodeSnapShot(applyMsg.Snapshot)
+			kv.lastSnapshotIndex = applyMsg.SnapshotIndex
+
+			kv.mu.Unlock()
+		}
 
 	}
 }
@@ -232,13 +267,44 @@ func (kv *KVServer) getWaitCh(index int) chan Op {
 	return ch
 }
 
-func (kv *KVServer) isDuplicate(clientId int64, seqId int) bool {
+func (kv *KVServer) isDup(clientId int64, seqId int) bool {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
-	lastSeqId, exist := kv.seqMap[clientId]
-	if !exist {
+	lastSeqId, ok := kv.seqMap[clientId]
+	if !ok {
 		return false
 	}
 	return seqId <= lastSeqId
+}
+
+func (kv *KVServer) DecodeSnapShot(snapshot []byte) {
+	if snapshot == nil || len(snapshot) < 1 {
+		return
+	}
+
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+
+	var persistmap map[string]string
+	var seqMap map[int64]int
+
+	if d.Decode(&persistmap) == nil && d.Decode(&seqMap) == nil {
+		kv.kvPersistMap = persistmap
+		kv.seqMap = seqMap
+	} else {
+		fmt.Printf("server[%v]:Failed to decode snapshot!\n", kv.me)
+	}
+}
+
+// CreateSnapShot:{kvPersistMap,seqMap}
+func (kv *KVServer) CreateSnapShot() []byte {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.kvPersistMap)
+	e.Encode(kv.seqMap)
+	data := w.Bytes()
+	return data
 }

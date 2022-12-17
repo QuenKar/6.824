@@ -93,3 +93,8 @@ func (rf *Raft) setState(role Status, votedFor int, getVoted int, updateTime boo
 		rf.electionTimeout = time.Now()
 	}
 }
+
+//获取raft状态的size
+func (rf *Raft) GetRaftStateSize() int {
+	return rf.persister.RaftStateSize()
+}

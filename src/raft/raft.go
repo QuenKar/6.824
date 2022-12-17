@@ -52,7 +52,6 @@ import (
 	//	"bytes"
 
 	"bytes"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -417,7 +416,7 @@ func (rf *Raft) killed() bool {
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	fmt.Printf("create a new Raft server\n")
+	// fmt.Printf("create a new Raft server\n")
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
