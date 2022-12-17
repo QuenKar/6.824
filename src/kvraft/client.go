@@ -67,7 +67,7 @@ func (ck *Clerk) Get(key string) string {
 				ck.leaderId = sid
 				return ""
 			case ErrWrongLeader:
-				//这里可以让节点直接告诉leader是谁
+				//感觉这里可以让节点直接告诉leader是谁
 				sid = (sid + 1) % len(ck.servers)
 				continue
 			case OK:

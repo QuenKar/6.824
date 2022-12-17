@@ -3,7 +3,6 @@ package kvraft
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,15 +11,6 @@ import (
 	"6.824/labrpc"
 	"6.824/raft"
 )
-
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
 
 type Op struct {
 	// Your definitions here.
@@ -207,6 +197,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 }
 
 func (kv *KVServer) applyMsgHandler() {
+	fmt.Printf("start [func-applyMsgHandler]\n")
 	for {
 		if kv.killed() {
 			return
@@ -234,8 +225,12 @@ func (kv *KVServer) applyMsgHandler() {
 				kv.mu.Unlock()
 			}
 
-			//keep snapshot into rf
-			if kv.lastSnapshotIndex != -1 && kv.rf.GetRaftStateSize() > kv.maxraftstate {
+			//keep snapshot to rf
+			//debug
+			// fmt.Printf("RaftStateSize is %v\n", kv.rf.GetRaftStateSize())
+			if kv.maxraftstate != -1 && kv.rf.GetRaftStateSize() > kv.maxraftstate {
+				//debug
+				// fmt.Printf("kv[%v]:do snapshot\n", kv.me)
 				kv.rf.Snapshot(applyMsg.CommandIndex, kv.CreateSnapShot())
 			}
 

@@ -52,6 +52,7 @@ import (
 	//	"bytes"
 
 	"bytes"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -940,7 +941,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.persist()
 
 	//debug
-	DPrintf("in Term[%v]:rf[%v]:SnapShot to %v\n", rf.currentTerm, rf.me, rf.lastIncludedIndex)
+	fmt.Printf("in Term[%v]:rf[%v]:SnapShot to %v\n", rf.currentTerm, rf.me, rf.lastIncludedIndex)
 }
 
 // leader 发送给 follower snapshot
