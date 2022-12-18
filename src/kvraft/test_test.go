@@ -663,7 +663,8 @@ func TestSnapshotSize3B(t *testing.T) {
 	cfg.begin("Test: snapshot size is reasonable (3B)")
 
 	for i := 0; i < 200; i++ {
-		fmt.Printf("debug(%v)\n", i)
+		//debug
+		// fmt.Printf("debug(%v)\n", i)
 		Put(cfg, ck, "x", "0", nil, -1)
 		check(cfg, t, ck, "x", "0")
 		Put(cfg, ck, "x", "1", nil, -1)

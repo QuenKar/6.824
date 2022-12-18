@@ -61,7 +61,7 @@ func (rf *Raft) getRealLog(index int) LogEntry {
 // 根据logic index获取log term
 func (rf *Raft) getRealLogTerm(index int) int {
 	//此时logs应当只有一个LogEntry{}
-	if index-rf.lastIncludedIndex == 0 {
+	if index-rf.lastIncludedIndex <= 0 {
 		//debug
 		// fmt.Printf("rf[%v]:lastIncludedTerm = %v\n", rf.me, rf.lastIncludedTerm)
 		return rf.lastIncludedTerm

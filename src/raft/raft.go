@@ -52,7 +52,6 @@ import (
 	//	"bytes"
 
 	"bytes"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,12 +72,12 @@ type AppendEntriesState int
 // 设置投票时间范围150-300ms
 const (
 	MinVoteTime = 150
-	MaxVoteTime = 350
+	MaxVoteTime = 300
 )
 
 const (
-	HeartBeatInterval = 100 //心跳间隔时间
-	AppliedInterval   = 30  //检查是否可以把command应用到状态机的时间间隔
+	HeartBeatInterval = 35 //心跳间隔时间
+	AppliedInterval   = 15 //检查是否可以把command应用到状态机的时间间隔
 )
 
 const (
@@ -465,9 +464,9 @@ func (rf *Raft) electionTicker() {
 		nowTime := time.Now()
 		time.Sleep(rf.getRandExpireTime(rf.me))
 
-		rf.mu.Lock()
 		//当voted
 		if rf.electionTimeout.Before(nowTime) && !rf.IsLeader() {
+			rf.mu.Lock()
 			//变成candidate
 			rf.currentTerm += 1
 			rf.role = Candidate
@@ -489,9 +488,9 @@ func (rf *Raft) electionTicker() {
 
 			//更新计时器
 			rf.electionTimeout = time.Now()
+			rf.mu.Unlock()
 		}
 
-		rf.mu.Unlock()
 	}
 }
 
@@ -824,8 +823,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.UpdateNextIndex = -1
 	reply.Success = true
 
-	//感觉有点问题
-	if rf.lastIncludedIndex > args.PrevLogIndex+len(args.Entries) {
+	//感觉有点问题,这里在跑3B测试的时候，Slice数组可能会越界，
+	//这里处理preLogIndex-lastIncludedIndex为负数，会导致Slice越界的问题
+	if rf.lastIncludedIndex > args.PrevLogIndex {
 		reply.Success = false
 		reply.UpdateNextIndex = rf.lastIncludedIndex + 1
 		return
@@ -941,7 +941,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.persist()
 
 	//debug
-	fmt.Printf("in Term[%v]:rf[%v]:SnapShot to %v\n", rf.currentTerm, rf.me, rf.lastIncludedIndex)
+	// fmt.Printf("in Term[%v]:rf[%v]:SnapShot to %v\n", rf.currentTerm, rf.me, rf.lastIncludedIndex)
 }
 
 // leader 发送给 follower snapshot
