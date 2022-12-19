@@ -55,6 +55,7 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	//传给raft层的cmd
 	cmd := Op{
 		OpType:      JoinOp,
+		ClientId:    args.ClientId,
 		SeqId:       args.SeqId,
 		JoinServers: args.Servers,
 	}
