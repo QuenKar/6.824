@@ -95,6 +95,7 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	cmd := Op{
 		OpType:    LeaveOp,
 		SeqId:     args.SeqId,
+		ClientId:  args.ClientId,
 		LeaveGIDs: args.GIDs,
 	}
 	idx, _, _ := sc.rf.Start(cmd)
@@ -133,6 +134,7 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	cmd := Op{
 		OpType:    MoveOp,
 		SeqId:     args.SeqId,
+		ClientId:  args.ClientId,
 		MoveShard: args.Shard,
 		MoveGID:   args.GID,
 	}
@@ -172,6 +174,7 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	cmd := Op{
 		OpType:   QueryOp,
 		SeqId:    args.SeqId,
+		ClientId: args.ClientId,
 		QueryNum: args.Num,
 	}
 	idx, _, _ := sc.rf.Start(cmd)
@@ -259,7 +262,7 @@ func (sc *ShardCtrler) applyMsgHandler() {
 				case QueryOp:
 					//no need
 				case JoinOp:
-					
+
 					sc.configs = append(sc.configs, *sc.JoinHandler(op.JoinServers))
 				case LeaveOp:
 					sc.configs = append(sc.configs, *sc.LeaveHandler(op.LeaveGIDs))
