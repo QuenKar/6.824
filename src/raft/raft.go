@@ -464,9 +464,9 @@ func (rf *Raft) electionTicker() {
 		nowTime := time.Now()
 		time.Sleep(rf.getRandExpireTime(rf.me))
 
+		rf.mu.Lock()
 		//当voted
 		if rf.electionTimeout.Before(nowTime) && !rf.IsLeader() {
-			rf.mu.Lock()
 			//变成candidate
 			rf.currentTerm += 1
 			rf.role = Candidate
@@ -488,8 +488,8 @@ func (rf *Raft) electionTicker() {
 
 			//更新计时器
 			rf.electionTimeout = time.Now()
-			rf.mu.Unlock()
 		}
+		rf.mu.Unlock()
 
 	}
 }
