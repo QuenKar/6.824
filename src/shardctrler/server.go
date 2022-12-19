@@ -259,6 +259,7 @@ func (sc *ShardCtrler) applyMsgHandler() {
 				case QueryOp:
 					//no need
 				case JoinOp:
+					
 					sc.configs = append(sc.configs, *sc.JoinHandler(op.JoinServers))
 				case LeaveOp:
 					sc.configs = append(sc.configs, *sc.LeaveHandler(op.LeaveGIDs))
@@ -266,7 +267,7 @@ func (sc *ShardCtrler) applyMsgHandler() {
 					sc.configs = append(sc.configs, *sc.MoveHandler(op.MoveShard, op.MoveGID))
 				}
 				//?
-				sc.seqMap[op.ClientId] = op.SeqId
+				// sc.seqMap[op.ClientId] = op.SeqId
 				sc.mu.Unlock()
 			}
 
@@ -279,7 +280,7 @@ func (sc *ShardCtrler) applyMsgHandler() {
 //*********************************Handler************************************
 
 func (sc *ShardCtrler) JoinHandler(servers map[int][]string) *Config {
-
+	fmt.Printf("sc[%v]:recv join rpc and join servers is:%v\n", sc.me, servers)
 	//get the lastest config
 	cfg := sc.configs[len(sc.configs)-1]
 	newGroups := make(map[int][]string)
@@ -303,6 +304,7 @@ func (sc *ShardCtrler) JoinHandler(servers map[int][]string) *Config {
 			groupShardsCount[gid]++
 		}
 	}
+	fmt.Printf("sc[%v]:after join,newGroups:%v\n", sc.me, newGroups)
 	if len(groupShardsCount) != 0 {
 		return &Config{
 			Num:    len(sc.configs),
@@ -319,7 +321,7 @@ func (sc *ShardCtrler) JoinHandler(servers map[int][]string) *Config {
 }
 
 func (sc *ShardCtrler) LeaveHandler(gids []int) *Config {
-	fmt.Printf("sc[%v]-[func-LeaveHandler]:delete %v\n", sc.me, gids)
+	fmt.Printf("sc[%v]-[func-LeaveHandler]:leave gids:%v\n", sc.me, gids)
 	leavegids := make(map[int]bool)
 
 	for _, gid := range gids {
@@ -353,7 +355,7 @@ func (sc *ShardCtrler) LeaveHandler(gids []int) *Config {
 			}
 		}
 	}
-	fmt.Printf("newShards:%v\n", newShards)
+	fmt.Printf("after leave,newShards:%v\n", newShards)
 	fmt.Printf("groupShardsCount:%v\n", groupShardsCount)
 
 	if len(groupShardsCount) != 0 {

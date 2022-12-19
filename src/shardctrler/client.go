@@ -6,6 +6,7 @@ package shardctrler
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	mrand "math/rand"
 	"time"
@@ -71,6 +72,7 @@ func (ck *Clerk) Query(num int) Config {
 }
 
 func (ck *Clerk) Join(servers map[int][]string) {
+	fmt.Printf("client[%v]:send a join rpc\n", ck.clientId)
 	ck.seqId++
 	// Your code here.
 	args := JoinArgs{
@@ -103,6 +105,7 @@ func (ck *Clerk) Join(servers map[int][]string) {
 }
 
 func (ck *Clerk) Leave(gids []int) {
+	fmt.Printf("client[%v]:send a leave rpc\n", ck.clientId)
 	ck.seqId++
 	// Your code here.
 	args := LeaveArgs{
