@@ -1,7 +1,6 @@
 package shardctrler
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -284,7 +283,7 @@ func (sc *ShardCtrler) applyMsgHandler() {
 //*********************************Handler************************************
 
 func (sc *ShardCtrler) JoinHandler(servers map[int][]string) *Config {
-	fmt.Printf("sc[%v]:recv join rpc and join servers is:%v\n", sc.me, servers)
+	// fmt.Printf("sc[%v]:recv join rpc and join servers is:%v\n", sc.me, servers)
 	//get the lastest config
 	cfg := sc.configs[len(sc.configs)-1]
 	newGroups := make(map[int][]string)
@@ -308,7 +307,7 @@ func (sc *ShardCtrler) JoinHandler(servers map[int][]string) *Config {
 			groupShardsCount[gid]++
 		}
 	}
-	fmt.Printf("sc[%v]:after join,newGroups:%v\n", sc.me, newGroups)
+	// fmt.Printf("sc[%v]:after join,newGroups:%v\n", sc.me, newGroups)
 	if len(groupShardsCount) != 0 {
 		return &Config{
 			Num:    len(sc.configs),
@@ -325,7 +324,7 @@ func (sc *ShardCtrler) JoinHandler(servers map[int][]string) *Config {
 }
 
 func (sc *ShardCtrler) LeaveHandler(gids []int) *Config {
-	fmt.Printf("sc[%v]-[func-LeaveHandler]:leave gids:%v\n", sc.me, gids)
+	// fmt.Printf("sc[%v]-[func-LeaveHandler]:leave gids:%v\n", sc.me, gids)
 	leavegids := make(map[int]bool)
 
 	for _, gid := range gids {
@@ -349,7 +348,7 @@ func (sc *ShardCtrler) LeaveHandler(gids []int) *Config {
 	for gid := range newGroups {
 		groupShardsCount[gid] = 0
 	}
-	fmt.Printf("cfg.shards:%v\n", cfg.Shards)
+	// fmt.Printf("cfg.shards:%v\n", cfg.Shards)
 	for shard, gid := range cfg.Shards {
 		if gid != 0 {
 			if leavegids[gid] {
@@ -359,8 +358,8 @@ func (sc *ShardCtrler) LeaveHandler(gids []int) *Config {
 			}
 		}
 	}
-	fmt.Printf("after leave,newShards:%v\n", newShards)
-	fmt.Printf("groupShardsCount:%v\n", groupShardsCount)
+	// fmt.Printf("after leave,newShards:%v\n", newShards)
+	// fmt.Printf("groupShardsCount:%v\n", groupShardsCount)
 
 	if len(groupShardsCount) != 0 {
 		return &Config{
