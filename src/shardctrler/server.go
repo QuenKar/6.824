@@ -319,7 +319,7 @@ func (sc *ShardCtrler) JoinHandler(servers map[int][]string) *Config {
 }
 
 func (sc *ShardCtrler) LeaveHandler(gids []int) *Config {
-	fmt.Printf("[func-LeaveHandler]:delete %v\n", gids)
+	fmt.Printf("sc[%v]-[func-LeaveHandler]:delete %v\n", sc.me, gids)
 	leavegids := make(map[int]bool)
 
 	for _, gid := range gids {
